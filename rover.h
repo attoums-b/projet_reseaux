@@ -1,24 +1,7 @@
-#ifndef ROVER_H
-#define ROVER_H
-
-#include "serveur.h"
-
-// constante
-#define PORT_TERRE 8080
-#define PORT_ALPHA 8081
-#define IP_SERVEUR "127.0.0.1"
-
-// structuer
-struct Rover {
-    int id;
-    int socketConnexion;
-    Position position;
-    int batterie;
-    char statut[50];
-    int modeServeurActif;
-};
+/*Définir que les fonctions qu'utilise le rover pour éviter les dépendances circulaires*/
 
 // methode de logs
+#include "def.h"
 void FichierLog_ecrire(Rover *r, const char *message);
 
 // methode de rover a implementer
@@ -35,5 +18,3 @@ void Rover_signalerTresor(Rover *r);
 
 // prototype de rover alpha
 void RoverAlpha_demarrerServeur(Rover *r);
-
-#endif // ROVER_H
