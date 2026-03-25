@@ -30,16 +30,15 @@ typedef struct CarteMars {
     int nbTresors;
 } CarteMars;
 
-typedef struct ServeurTerre {
+
+/*La structure de l'interface serveur */
+typedef struct IServeurTerre {
     int port;
     Rover *listeRovers[MAX_ROVERS];
     int nbRovers;
     CarteMars carte;
     FichierLog journal;
-} ServeurTerre;
-
-/*La structure de l'interface serveur */
-typedef struct IServeurTerre {
+    
     void (*demarrerServeur)(void);
     void (*arreterServeur)(void);
     void (*accepterConnexion)(Rover *r);
