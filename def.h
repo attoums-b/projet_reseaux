@@ -50,6 +50,7 @@ typedef struct Rover {
     int batterie;
     char statut[50];
     int modeServeurActif;
+    int etatRecharge;
 };
 
 #endif /* DEF_H */
