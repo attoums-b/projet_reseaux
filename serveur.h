@@ -1,7 +1,10 @@
 #ifndef SERVEUR_H
 #define SERVEUR_H
 
+#include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+
 #include "def.h"
 
 /* Fonctions serveur */
@@ -15,7 +18,6 @@ void demanderLogs(Rover *r);
 void archiverLogs(Rover *r, const char *logs);
 void journaliserEvenement(const char *message);
 
-/* Fonctions demandees: implementation generale */
 static inline Position calculerNouvelleDestination(Rover *r) {
     Position destination = {0, 0};
 
@@ -29,13 +31,21 @@ static inline Position calculerNouvelleDestination(Rover *r) {
 }
 
 static inline void envoyerNouvelleDestination(Rover *r, Position p) {
-    if (r == NULL) {
+    char message[64];
+    int len;
+
+    if (r == NULL || r->socketConnexion < 0) {
         return;
     }
 
-    r->position = p;
-    strncpy(r->statut, "DESTINATION_RECUE", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
+    /* L'ordre envoye est base sur la destination calculee serveur. */
+    p = calculerNouvelleDestination(r);
+    len = snprintf(message, sizeof(message), "Dirige aux coordonnées x:%d y:%d\n", p.x, p.y);
+    if (len <= 0) {
+        return;
+    }
+
+    send(r->socketConnexion, message, (size_t)len, 0);
 }
 
 static inline int verifierBatterie(Rover *r) {
@@ -47,11 +57,13 @@ static inline int verifierBatterie(Rover *r) {
 }
 
 static inline void ordonnerRecharge(Rover *r) {
-    if (r == 0) {
+    static const char message[] = "Recharge toi\n";
+
+    if (r == NULL || r->socketConnexion < 0) {
         return;
     }
-    strncpy(r->statut, "RECHARGE", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
+
+    send(r->socketConnexion, message, sizeof(message) - 1, 0);
 }
 
 #endif /* SERVEUR_H */
