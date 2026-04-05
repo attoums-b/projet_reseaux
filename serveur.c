@@ -102,3 +102,32 @@ void ordonnerRecharge(Rover *r) {
 
     send(r->socketConnexion, message, sizeof(message) - 1, 0);
 }
+
+/*Ma partie (emmanuel)*/
+
+void mettreAJourPositionRover(Rover *r, Position p){
+    if(r == NULL){
+        return ; 
+    }
+    r->position = p;
+    printf("Position du rover mise à jour: (%d, %d)\n", p.x , p.y);
+
+
+
+}
+
+void enregistrerTresor(Position p){
+
+    
+}
+
+void demanderLogs(Rover *r){
+
+}
+void archiverLogs(Rover *r, const char *logs){
+
+}
+void journaliserEvenement(const char *message){
+
+    
+}
