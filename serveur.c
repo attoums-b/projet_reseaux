@@ -117,17 +117,56 @@ void mettreAJourPositionRover(Rover *r, Position p){
 }
 
 void enregistrerTresor(Position p){
+    static CarteMars carte; // simplification pédagogique
 
-    
+    if(carte.nbTresors >= MAX_TRESORS){
+        printf("Max tresors atteint\n");
+        return;
+    }
+
+    carte.tresors[carte.nbTresors] = p;
+    carte.nbTresors++;
+
+    printf("Tresor enregistre en (%d, %d)\n", p.x, p.y);
 }
 
+//fonctions permettant de demander les logs 
 void demanderLogs(Rover *r){
+    const char *message = "ENVOI_LOGS\n";
 
+    if(r == NULL || r->socketConnexion < 0){
+        return;
+    }
+
+    send(r->socketConnexion, message, strlen(message), 0);
+
+    printf("Demande de logs envoyee au rover %d\n", r->id);
 }
+
+
 void archiverLogs(Rover *r, const char *logs){
+    FILE *f = fopen("logs_serveur.txt", "a");
 
+    if(f == NULL){
+        printf("Erreur ouverture fichier logs\n");
+        return;
+    }
+
+    fprintf(f, "Rover %d : %s\n", r->id, logs);
+    fclose(f);
+
+    printf("Logs archives pour rover %d\n", r->id);
 }
-void journaliserEvenement(const char *message){
 
-    
+void journaliserEvenement(const char *message){
+    FILE *f = fopen("journal_serveur.txt", "a");
+
+    if(f == NULL){
+        return;
+    }
+
+    fprintf(f, "%s\n", message);
+    fclose(f);
+
+    printf("[LOG] %s\n", message);
 }
