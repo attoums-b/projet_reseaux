@@ -49,12 +49,6 @@ void demarrerServeur(void);
 void arreterServeur(void);
 void accepterConnexion(Rover *r);
 void gererDeconnexion(Rover *r);
-void mettreAJourPositionRover(Rover *r, Position p);
-void enregistrerTresor(Position p);
-void demanderLogs(Rover *r);
-void archiverLogs(Rover *r, const char *logs);
-void journaliserEvenement(const char *message);
-
 /* Implementees */
 Position calculerNouvelleDestination(Rover *r) {
     Position destination = {0, 0};
