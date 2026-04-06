@@ -26,13 +26,6 @@ typedef struct Rover {
 } Rover;
 
 /* Non implementees pour le moment (conservees en declarations) */
-void FichierLog_ecrire(Rover *r, const char *message);
-void Rover_envoyerPosition(Rover *r);
-void Rover_demanderNouvelleDestination(Rover *r);
-void Rover_recevoirDestination(Rover *r, char *buffer);
-void Rover_seDeplacerVers(Rover *r, Position p);
-void Rover_signalerTresor(Rover *r);
-void RoverAlpha_demarrerServeur(Rover *r);
 
 /* Implementees */
 int Rover_seConnecter(Rover *r, const char *ip, int port) {
