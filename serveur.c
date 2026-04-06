@@ -1,5 +1,10 @@
 #include <stdio.h>
+#include <string.h>
+
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 #define MAX_ROVERS 64
 #define MAX_TRESORS 256
@@ -54,6 +59,79 @@ void enregistrerTresor(Position p);
 void demanderLogs(Rover *r);
 void archiverLogs(Rover *r, const char *logs);
 void journaliserEvenement(const char *message);
+
+
+int serveurSocket;
+
+void demarrerServeur(void){
+    struct sockaddr_in serveurAddr;
+
+    // 1. creation socket
+    serveurSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(serveurSocket < 0){
+        perror("Erreur socket");
+        return;
+    }
+
+    // 2. configuration adresse
+    serveurAddr.sin_family = AF_INET;
+    serveurAddr.sin_port = htons(8080); // port
+    serveurAddr.sin_addr.s_addr = INADDR_ANY; // accepte tous
+
+    // 3. bind
+    if(bind(serveurSocket, (struct sockaddr*)&serveurAddr, sizeof(serveurAddr)) < 0){
+        perror("Erreur bind");
+        return;
+    }
+
+    // 4. listen
+    if(listen(serveurSocket, 5) < 0){
+        perror("Erreur listen");
+        return;
+    }
+
+    printf("Serveur demarre sur le port 8080...\n");
+}
+
+void accepterConnexion(Rover *r){
+    struct sockaddr_in clientAddr;
+    socklen_t taille = sizeof(clientAddr);
+
+    if(r == NULL){
+        return;
+    }
+
+    // accept retourne un NOUVEAU socket pour communiquer
+    r->socketConnexion = accept(serveurSocket, (struct sockaddr*)&clientAddr, &taille);
+
+    if(r->socketConnexion < 0){
+        perror("Erreur accept");
+        return;
+    }
+
+    printf("Rover %d connecte !\n", r->id);
+}
+
+void gererDeconnexion(Rover *r){
+    if(r == NULL){
+        return;
+    }
+
+    if(r->socketConnexion >= 0){
+        close(r->socketConnexion);
+        r->socketConnexion = -1;
+    }
+
+    printf("Rover %d deconnecte\n", r->id);
+}
+
+void arreterServeur(void){
+    if(serveurSocket >= 0){
+        close(serveurSocket);
+    }
+
+    printf("Serveur arrete\n");
+}
 
 /* Implementees */
 Position calculerNouvelleDestination(Rover *r) {
