@@ -12,6 +12,7 @@
 
 #define OP_DEMANDER_ACTION 1
 #define OP_OBSERVER 2
+#define OP_SIMULER_KO 9
 
 #define CMD_DESTINATION 1
 #define CMD_RECHARGE 2
@@ -37,6 +38,10 @@ typedef struct MessageResp {
     int y;
     int batterie;
 } MessageResp;
+
+static int gNbRoversMax = 1;
+static int gRoverAlphaId = 1;
+static int gTerreKO = 0;
 
 static ssize_t send_all(int fd, const void *buf, size_t len) {
     const char *p = (const char *)buf;
@@ -119,13 +124,38 @@ static void traiter_client(int client_fd, const struct sockaddr_in *client_addr)
         decode_req(&req_net, &req);
 
         memset(&resp, 0, sizeof(resp));
+        if (req.rover_id < 1 || req.rover_id > gNbRoversMax) {
+            resp.cmd = CMD_ERREUR;
+            encode_resp(&resp, &resp_net);
+            if (send_all(client_fd, &resp_net, sizeof(resp_net)) < 0) {
+                break;
+            }
+            continue;
+        }
+
         if (req.op == OP_DEMANDER_ACTION) {
             Position p;
             Position d;
 
             p.x = req.x;
             p.y = req.y;
-            if (verifierBatterie(req.batterie)) {
+            if (gTerreKO) {
+                resp.cmd = CMD_RECHARGE;
+                resp.x = req.x;
+                resp.y = req.y;
+                resp.batterie = req.batterie;
+                snprintf(logbuf, sizeof(logbuf),
+                         "Terre KO: Alpha #%d ordonne RECHARGE au rover #%d",
+                         gRoverAlphaId, req.rover_id);
+                log_serveur(logbuf);
+                {
+                    FILE *fa = fopen("log_rover_alpha.txt", "a");
+                    if (fa != NULL) {
+                        fprintf(fa, "Alpha -> rover #%d : RECHARGE\n", req.rover_id);
+                        fclose(fa);
+                    }
+                }
+            } else if (verifierBatterie(req.batterie)) {
                 d = calculerNouvelleDestination(p);
                 resp.cmd = CMD_DESTINATION;
                 resp.x = d.x;
@@ -155,6 +185,24 @@ static void traiter_client(int client_fd, const struct sockaddr_in *client_addr)
                      "Rover #%d observe etat pos=(%d,%d) bat=%d",
                      req.rover_id, req.x, req.y, req.batterie);
             log_serveur(logbuf);
+        } else if (req.op == OP_SIMULER_KO) {
+            resp.cmd = CMD_ETAT;
+            gTerreKO = !gTerreKO;
+            resp.x = 0;
+            resp.y = 0;
+            resp.batterie = gTerreKO;
+            if (gTerreKO) {
+                log_serveur("Simulation Terre KO active");
+                {
+                    FILE *fa = fopen("log_rover_alpha.txt", "a");
+                    if (fa != NULL) {
+                        fprintf(fa, "rover terre chaos, je prends le relais\n");
+                        fclose(fa);
+                    }
+                }
+            } else {
+                log_serveur("Simulation Terre KO desactivee");
+            }
         } else {
             resp.cmd = CMD_ERREUR;
         }
@@ -174,6 +222,7 @@ int main(int argc, char **argv) {
     struct sockaddr_in srv_addr;
     int port = DEFAULT_PORT;
     int opt = 1;
+    int nb;
 
     if (argc >= 2) {
         port = atoi(argv[1]);
@@ -182,6 +231,15 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
+
+    printf("Nombre de rovers a gerer: ");
+    if (scanf("%d", &nb) != 1 || nb < 1) {
+        fprintf(stderr, "Nombre invalide.\n");
+        return 1;
+    }
+    gNbRoversMax = nb;
+    gRoverAlphaId = 1;
+    printf("Rover Alpha choisi automatiquement: #%d\n", gRoverAlphaId);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {

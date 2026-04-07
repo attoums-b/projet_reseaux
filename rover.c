@@ -10,6 +10,7 @@
 
 #define OP_DEMANDER_ACTION 1
 #define OP_OBSERVER 2
+#define OP_SIMULER_KO 9
 
 #define CMD_DESTINATION 1
 #define CMD_RECHARGE 2
@@ -198,7 +199,9 @@ int main(int argc, char **argv) {
         printf("2) Se deplacer manuellement\n");
         printf("3) Recharger manuellement (+%%)\n");
         printf("4) Observer (demande etat)\n");
-        printf("5) Quitter\n");
+        printf("5) Switch rover (changer ID)\n");
+        printf("6) Simuler serveur Terre KO ON/OFF\n");
+        printf("7) Quitter\n");
         printf("Choix: ");
 
         if (scanf("%d", &choix) != 1) {
@@ -241,6 +244,22 @@ int main(int argc, char **argv) {
             printf("Etat rover: pos=(%d,%d) bat=%d statut=%s\n",
                    r.position.x, r.position.y, r.batterie, r.statut);
         } else if (choix == 5) {
+            int newId;
+            printf("Nouvel ID rover: ");
+            if (scanf("%d", &newId) == 1 && newId > 0) {
+                r.id = newId;
+                snprintf(r.statut, sizeof(r.statut), "SWITCH_ID_%d", newId);
+                printf("Rover actif maintenant: #%d\n", r.id);
+            } else {
+                printf("ID invalide.\n");
+            }
+        } else if (choix == 6) {
+            if (envoyer_requete(&r, OP_SIMULER_KO) != 0) {
+                puts("Erreur communication serveur.");
+                break;
+            }
+            puts("Demande de bascule Terre KO envoyee.");
+        } else if (choix == 7) {
             break;
         }
     }
