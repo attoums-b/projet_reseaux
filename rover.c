@@ -1,14 +1,20 @@
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 
-#define PORT_TERRE 8080
-#define PORT_ALPHA 8081
-#define IP_SERVEUR "127.0.0.1"
+#define DEFAULT_PORT 8080
+
+#define OP_DEMANDER_ACTION 1
+#define OP_OBSERVER 2
+
+#define CMD_DESTINATION 1
+#define CMD_RECHARGE 2
+#define CMD_ETAT 3
+#define CMD_ERREUR 99
 
 typedef struct Position {
     int x;
@@ -21,269 +27,224 @@ typedef struct Rover {
     Position position;
     int batterie;
     char statut[50];
-    int modeServeurActif;
-    int etatRecharge;
 } Rover;
 
-/* Non implementees pour le moment (conservees en declarations) */
+typedef struct MessageReq {
+    int op;
+    int rover_id;
+    int x;
+    int y;
+    int batterie;
+} MessageReq;
 
-/* Implementees */
-int Rover_seConnecter(Rover *r, const char *ip, int port) {
-    struct sockaddr_in serveurAddr;
-    int sockfd;
+typedef struct MessageResp {
+    int cmd;
+    int x;
+    int y;
+    int batterie;
+} MessageResp;
 
-    if (r == NULL || ip == NULL || port <= 0) {
+static ssize_t send_all(int fd, const void *buf, size_t len) {
+    const char *p = (const char *)buf;
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t n = send(fd, p + sent, len - sent, 0);
+        if (n <= 0) return -1;
+        sent += (size_t)n;
+    }
+    return (ssize_t)sent;
+}
+
+static ssize_t recv_all(int fd, void *buf, size_t len) {
+    char *p = (char *)buf;
+    size_t recvd = 0;
+    while (recvd < len) {
+        ssize_t n = recv(fd, p + recvd, len - recvd, 0);
+        if (n <= 0) return -1;
+        recvd += (size_t)n;
+    }
+    return (ssize_t)recvd;
+}
+
+static void encode_req(const MessageReq *in, MessageReq *out) {
+    out->op = htonl(in->op);
+    out->rover_id = htonl(in->rover_id);
+    out->x = htonl(in->x);
+    out->y = htonl(in->y);
+    out->batterie = htonl(in->batterie);
+}
+
+static void decode_resp(const MessageResp *in, MessageResp *out) {
+    out->cmd = ntohl(in->cmd);
+    out->x = ntohl(in->x);
+    out->y = ntohl(in->y);
+    out->batterie = ntohl(in->batterie);
+}
+
+static void log_rover(const Rover *r, const char *msg) {
+    FILE *f;
+    char nom[64];
+    if (r == NULL) return;
+    snprintf(nom, sizeof(nom), "log_rover_%d.txt", r->id);
+    f = fopen(nom, "a");
+    if (f == NULL) return;
+    fprintf(f, "%s\n", msg);
+    fclose(f);
+}
+
+static int connecter_serveur(Rover *r, const char *ip, int port) {
+    struct sockaddr_in addr;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((unsigned short)port);
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) <= 0) {
+        close(fd);
         return -1;
     }
 
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(fd);
         return -1;
     }
 
-    memset(&serveurAddr, 0, sizeof(serveurAddr));
-    serveurAddr.sin_family = AF_INET;
-    serveurAddr.sin_port = htons((unsigned short)port);
-
-    if (inet_pton(AF_INET, ip, &serveurAddr.sin_addr) <= 0) {
-        close(sockfd);
-        return -1;
-    }
-
-    if (connect(sockfd, (struct sockaddr *)&serveurAddr, sizeof(serveurAddr)) < 0) {
-        close(sockfd);
-        return -1;
-    }
-
-    r->socketConnexion = sockfd;
-    r->modeServeurActif = 0;
-    r->etatRecharge = 0;
+    r->socketConnexion = fd;
     strncpy(r->statut, "CONNECTE", sizeof(r->statut) - 1);
     r->statut[sizeof(r->statut) - 1] = '\0';
     return 0;
 }
 
-void Rover_seDeconnecter(Rover *r) {
-    if (r == NULL) {
-        return;
+static int envoyer_requete(Rover *r, int op) {
+    MessageReq req;
+    MessageReq req_net;
+    MessageResp resp_net;
+    MessageResp resp;
+    char logbuf[256];
+
+    req.op = op;
+    req.rover_id = r->id;
+    req.x = r->position.x;
+    req.y = r->position.y;
+    req.batterie = r->batterie;
+
+    encode_req(&req, &req_net);
+    if (send_all(r->socketConnexion, &req_net, sizeof(req_net)) < 0) return -1;
+    if (recv_all(r->socketConnexion, &resp_net, sizeof(resp_net)) < 0) return -1;
+
+    decode_resp(&resp_net, &resp);
+
+    if (resp.cmd == CMD_DESTINATION) {
+        r->position.x = resp.x;
+        r->position.y = resp.y;
+        r->batterie = resp.batterie > 0 ? resp.batterie - 1 : 0;
+        strncpy(r->statut, "ACTION_RECUE", sizeof(r->statut) - 1);
+        r->statut[sizeof(r->statut) - 1] = '\0';
+        snprintf(logbuf, sizeof(logbuf),
+                 "Action recue: direction position (%d,%d)", resp.x, resp.y);
+        log_rover(r, logbuf);
+    } else if (resp.cmd == CMD_RECHARGE) {
+        r->batterie = 100;
+        strncpy(r->statut, "RECHARGE", sizeof(r->statut) - 1);
+        r->statut[sizeof(r->statut) - 1] = '\0';
+        log_rover(r, "Action recue: recharge");
+    } else if (resp.cmd == CMD_ETAT) {
+        snprintf(logbuf, sizeof(logbuf),
+                 "Etat observe: pos=(%d,%d) bat=%d", resp.x, resp.y, resp.batterie);
+        log_rover(r, logbuf);
+    } else {
+        log_rover(r, "Erreur serveur");
     }
 
-    if (r->socketConnexion >= 0) {
-        close(r->socketConnexion);
-        r->socketConnexion = -1;
-    }
-
-    strncpy(r->statut, "DECONNECTE", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
+    return 0;
 }
 
-void Rover_recharger(Rover *r) {
-    if (r == NULL) {
-        return;
+int main(int argc, char **argv) {
+    Rover r;
+    const char *ip;
+    int port = DEFAULT_PORT;
+    int choix;
+
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s <IP_SERVEUR> <ID_ROVER> [PORT]\n", argv[0]);
+        return 1;
+    }
+    ip = argv[1];
+    r.id = atoi(argv[2]);
+    if (argc >= 4) {
+        port = atoi(argv[3]);
+    }
+    if (r.id <= 0) {
+        fprintf(stderr, "ID rover invalide.\n");
+        return 1;
     }
 
-    r->batterie = 100;
-    r->etatRecharge = 0;
-    strncpy(r->statut, "CHARGE", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
-}
+    memset(&r.position, 0, sizeof(r.position));
+    r.batterie = 100;
+    r.socketConnexion = -1;
+    strncpy(r.statut, "INIT", sizeof(r.statut) - 1);
+    r.statut[sizeof(r.statut) - 1] = '\0';
 
-
-void FichierLog_ecrire(Rover *r, const char *message) {
-    FILE *f;
-    char nomFichier[64];
-    time_t t;
-    struct tm *tm_info;
-
-    if (r == NULL || message == NULL) {
-        return;
+    if (connecter_serveur(&r, ip, port) != 0) {
+        perror("connect");
+        return 1;
     }
 
-    /* Creation du nom de fichier propre a ce rover */
-    snprintf(nomFichier, sizeof(nomFichier), "log_rover_%d.txt", r->id);
-    
-    f = fopen(nomFichier, "a");
-    if (f == NULL) {
-        return;
-    }
+    printf("Rover #%d connecte a %s:%d\n", r.id, ip, port);
+    while (1) {
+        printf("\n--- MENU ROVER #%d ---\n", r.id);
+        printf("1) Demander action au serveur\n");
+        printf("2) Se deplacer manuellement\n");
+        printf("3) Recharger manuellement (+%%)\n");
+        printf("4) Observer (demande etat)\n");
+        printf("5) Quitter\n");
+        printf("Choix: ");
 
-    /* Recuperation de l'heure actuelle */
-    time(&t);
-    tm_info = localtime(&t);
-
-    /* Formatage et ecriture du log */
-    fprintf(f, "[%02d:%02d:%02d] Bat:%d%% Pos:(%d,%d) | %s\n",
-            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec,
-            r->batterie, r->position.x, r->position.y, message);
-            
-    fclose(f);
-    
-    /* Affichage optionnel dans la console pour le debug */
-    printf("[ROVER %d] %s\n", r->id, message);
-}
-
-void Rover_envoyerPosition(Rover *r) {
-    char requete[128];
-    int len;
-
-    if (r == NULL || r->socketConnexion < 0) {
-        return;
-    }
-
-    /* Formatage de la demande  */
-    len = snprintf(requete, sizeof(requete), "REQ_POS:%d:%d:%d", 
-                   r->position.x, r->position.y, r->batterie);
-                   
-    if (len > 0) {
-        send(r->socketConnexion, requete, (size_t)len, 0);
-    }
-}
-
-void Rover_demanderNouvelleDestination(Rover *r) {
-    if (r == NULL) {
-        return;
-    }
-
-    FichierLog_ecrire(r, "Demande de nouvelle destination en cours...");
-    Rover_envoyerPosition(r);
-}
-
-void Rover_recevoirDestination(Rover *r, char *buffer) {
-    Position dest;
-
-    if (r == NULL || buffer == NULL) {
-        return;
-    }
-
-    /* Analyse de la reponse envoyee par le serveur */
-    if (strncmp(buffer, "CMD_RECHARGE", 12) == 0) {
-        FichierLog_ecrire(r, "Ordre de rechargement recu depuis la Terre.");
-        Rover_recharger(r);
-    } 
-    else if (strncmp(buffer, "CMD_GO", 6) == 0) {
-        /* Extraction des coordonnees de destination */
-        if (sscanf(buffer, "CMD_GO:%d:%d", &dest.x, &dest.y) == 2) {
-            Rover_seDeplacerVers(r, dest);
+        if (scanf("%d", &choix) != 1) {
+            int c;
+            while ((c = getchar()) != '\n' && c != EOF) {
+            }
+            continue;
         }
-    }
-}
 
-void Rover_signalerTresor(Rover *r) {
-    char message[128];
-    int len;
-
-    if (r == NULL || r->socketConnexion < 0) {
-        return;
-    }
-
-    len = snprintf(message, sizeof(message), "NOTIF_TRESOR:%d:%d", 
-                   r->position.x, r->position.y);
-                   
-    if (len > 0) {
-        send(r->socketConnexion, message, (size_t)len, 0);
-        FichierLog_ecrire(r, "Tresor detecte et signale a la Terre !");
-    }
-}
-
-void Rover_seDeplacerVers(Rover *r, Position p) {
-    if (r == NULL) {
-        return;
-    }
-
-    /* Mise a jour du statut securisee */
-    strncpy(r->statut, "EN_DEPLACEMENT", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
-    FichierLog_ecrire(r, "Debut du deplacement...");
-
-    while (r->position.x != p.x || r->position.y != p.y) {
-        if (r->batterie <= 0) {
-            FichierLog_ecrire(r, "Deplacement stoppe : Batterie vide !");
+        if (choix == 1) {
+            if (envoyer_requete(&r, OP_DEMANDER_ACTION) != 0) {
+                puts("Erreur communication serveur.");
+                break;
+            }
+            printf("Nouvelle position: (%d,%d), batterie=%d\n", r.position.x, r.position.y, r.batterie);
+        } else if (choix == 2) {
+            int x;
+            int y;
+            printf("Nouvelle position x y: ");
+            if (scanf("%d %d", &x, &y) == 2) {
+                r.position.x = x;
+                r.position.y = y;
+                if (r.batterie > 0) r.batterie--;
+                log_rover(&r, "Action executee: deplacement manuel");
+            }
+        } else if (choix == 3) {
+            int p;
+            printf("Pourcentage de recharge: ");
+            if (scanf("%d", &p) == 1) {
+                if (p < 0) p = 0;
+                r.batterie += p;
+                if (r.batterie > 100) r.batterie = 100;
+                log_rover(&r, "Action executee: recharge manuelle");
+            }
+        } else if (choix == 4) {
+            if (envoyer_requete(&r, OP_OBSERVER) != 0) {
+                puts("Erreur communication serveur.");
+                break;
+            }
+            printf("Etat rover: pos=(%d,%d) bat=%d statut=%s\n",
+                   r.position.x, r.position.y, r.batterie, r.statut);
+        } else if (choix == 5) {
             break;
         }
-
-        /* Logique de deplacement  */
-        if (r->position.x < p.x) {
-            r->position.x++;
-        } else if (r->position.x > p.x) {
-            r->position.x--;
-        } else if (r->position.y < p.y) {
-            r->position.y++;
-        } else if (r->position.y > p.y) {
-            r->position.y--;
-        }
-
-        r->batterie--;
-
-        /*trouver un tresor  */
-        if ((rand() % 5) == 0) {
-            Rover_signalerTresor(r);
-        }
-
-        /* Simule le temps de deplacement 3 srec */
-        usleep(300000); 
     }
 
-    /* Retour a l'etat initial */
-    strncpy(r->statut, "CONNECTE", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
-    FichierLog_ecrire(r, "Arrive a destination.");
-}
-
-void RoverAlpha_demarrerServeur(Rover *r) {
-    int server_fd, client_socket;
-    struct sockaddr_in address;
-    int opt = 1;
-    socklen_t addrlen = sizeof(address);
-    char buffer[256];
-
-    if (r == NULL) {
-        return;
-    }
-
-    FichierLog_ecrire(r, ">>> BASCULE EN MODE SERVEUR ALPHA (Secours) <<<");
-
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        return;
-    }
-
-    
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT_ALPHA);
-
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        close(server_fd);
-        FichierLog_ecrire(r, "Echec du Bind Alpha.");
-        return;
-    }
-
-    if (listen(server_fd, 5) < 0) {
-        close(server_fd);
-        return;
-    }
-
-    /* Met a jour le statut du Rover qui devient hebergeur */
-    r->modeServeurActif = 1;
-    strncpy(r->statut, "SERVEUR_ALPHA", sizeof(r->statut) - 1);
-    r->statut[sizeof(r->statut) - 1] = '\0';
-
-    /* Boucle infinie d'ecoute d'urgence */
-    while (1) {
-        client_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
-        if (client_socket >= 0) {
-            
-            /* Lit la requete pour vider le buffer du socket */
-            read(client_socket, buffer, sizeof(buffer) - 1);
-            
-            /* Le cahier des charges exige une reponse systematique : Recharge et attends */
-            send(client_socket, "CMD_RECHARGE", 12, 0);
-            
-            /* Coupe la connexion apres l'envoi de l'ordre */
-            close(client_socket);
-        }
-    }
+    if (r.socketConnexion >= 0) close(r.socketConnexion);
+    return 0;
 }
